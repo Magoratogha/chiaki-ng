@@ -2778,6 +2778,26 @@ DialogView {
                             Layout.alignment: Qt.AlignHCenter
                             Label {
                                 Layout.alignment: Qt.AlignRight
+                                text: qsTr("Xbox Ally X Adaptive Triggers:")
+                            }
+
+                            C.CheckBox {
+                                id: xboxAllyXTriggers
+                                text: qsTr("Emulate adaptive triggers via impulse trigger motors")
+                                checked: Chiaki.settings.xboxAllyXTriggersEnabled
+                                onToggled: Chiaki.settings.xboxAllyXTriggersEnabled = checked
+                            }
+
+                            Label {
+                                Layout.alignment: Qt.AlignRight
+                                text: qsTr("(Checked)")
+                            }
+                        }
+                        RowLayout {
+                            spacing: 10
+                            Layout.alignment: Qt.AlignHCenter
+                            Label {
+                                Layout.alignment: Qt.AlignRight
                                 text: qsTr("True Haptics Intensity:")
                             }
 

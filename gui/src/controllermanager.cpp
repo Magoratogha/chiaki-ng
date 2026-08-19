@@ -9,6 +9,117 @@
 #ifdef CHIAKI_GUI_ENABLE_SDL_GAMECONTROLLER
 #include <SDL.h>
 #endif
+#ifdef _WIN32
+#include <windows.h>
+#include <setupapi.h>
+#include <hidsdi.h>
+#pragma comment(lib, "hid.lib")
+#pragma comment(lib, "setupapi.lib")
+#endif
+
+#ifdef _WIN32
+static uint8_t XboxAllyXPositionToZone(uint8_t rawPosition)
+{
+	uint16_t zone = ((uint16_t)rawPosition * 10) / 256;
+	return zone > 9 ? 9 : (uint8_t)zone;
+}
+
+static float XboxAllyXPositionToZoneFloat(uint8_t rawPosition)
+{
+	float zone = ((float)rawPosition * 10.0f) / 256.0f;
+	return zone > 9.0f ? 9.0f : zone;
+}
+
+// ¿La zona esta dentro del rango donde el efecto deberia estar activo?
+// Feedback/Vibration usan un bitmask directo de zonas activas. Weapon,
+// Bow, Galloping y Machine usan 2 bits (inicio/fin) que definen un rango.
+static bool XboxAllyXZoneActive(uint8_t type, const uint8_t *data, uint8_t currentZone)
+{
+	if(type == 0x00 || type == 0x05) // Off
+		return false;
+
+	uint16_t zones = (uint16_t)data[0] | ((uint16_t)data[1] << 8);
+	if(zones == 0)
+		return false;
+
+	if(type == 0x25 || type == 0x22 || type == 0x23 || type == 0x27) // Weapon, Bow, Galloping, Machine
+	{
+		int low = -1, high = -1;
+		for(int i = 0; i < 10; i++)
+		{
+			if(zones & (1 << i))
+			{
+				if(low < 0) low = i;
+				high = i;
+			}
+		}
+		if(low < 0)
+			return false;
+		return currentZone >= low && currentZone <= high;
+	}
+
+	return (zones & (1 << currentZone)) != 0;
+}
+
+// Fuerza (0-7) para una zona puntual, segun el tipo de efecto.
+static uint8_t XboxAllyXExtractForceForZone(uint8_t type, const uint8_t *data, uint8_t zone)
+{
+	switch(type)
+	{
+		case 0x21: // Feedback
+		case 0x26: // Vibration
+		{
+			uint32_t packed = (uint32_t)data[2] | ((uint32_t)data[3] << 8)
+				| ((uint32_t)data[4] << 16) | ((uint32_t)data[5] << 24);
+			return (uint8_t)((packed >> (3 * zone)) & 0x07);
+		}
+		case 0x25: // Weapon: fuerza uniforme
+			return data[2] & 0x07;
+		case 0x22: // Bow: fuerza principal (ignoramos el snap-back por ahora)
+			return data[2] & 0x07;
+		case 0x23: // Galloping: no tiene campo de fuerza, es un patron ritmico.
+			return 5; // aproximacion: intensidad media fija mientras esta activo
+		case 0x27: // Machine: oscila entre 2 amplitudes, aproximamos con el promedio
+		{
+			uint8_t a = data[2] & 0x07;
+			uint8_t b = (data[2] >> 3) & 0x07;
+			return (uint8_t)((a + b) / 2);
+		}
+		default:
+			return (data[1] != 0 ? data[1] : data[0]) & 0x07;
+	}
+}
+
+// Traduce tipo+data+posicion cruda (0-255) a intensidad 0-255.
+// Para Feedback/Vibration interpola entre zonas adyacentes para que la
+// transicion se sienta gradual en vez de "a saltos"; el resto de los
+// tipos tiene fuerza uniforme en su rango asi que interpolar no aporta.
+static uint8_t XboxAllyXApproxIntensity(uint8_t type, const uint8_t *data, uint8_t rawPosition)
+{
+	uint8_t zone = XboxAllyXPositionToZone(rawPosition);
+	if(!XboxAllyXZoneActive(type, data, zone))
+		return 0;
+
+	if(type == 0x21 || type == 0x26)
+	{
+		float zoneFloat = XboxAllyXPositionToZoneFloat(rawPosition);
+		uint8_t zoneLow = (uint8_t)zoneFloat;
+		uint8_t zoneHigh = zoneLow < 9 ? (uint8_t)(zoneLow + 1) : 9;
+		float frac = zoneFloat - zoneLow;
+
+		uint8_t forceLow = XboxAllyXZoneActive(type, data, zoneLow) ? XboxAllyXExtractForceForZone(type, data, zoneLow) : 0;
+		uint8_t forceHigh = XboxAllyXZoneActive(type, data, zoneHigh) ? XboxAllyXExtractForceForZone(type, data, zoneHigh) : 0;
+		float forceInterp = forceLow + (forceHigh - forceLow) * frac;
+
+		uint16_t scaled = (uint16_t)((forceInterp + 1.0f) * 32.0f);
+		return scaled > 255 ? 255 : (uint8_t)scaled;
+	}
+
+	uint8_t force = XboxAllyXExtractForceForZone(type, data, zone);
+	uint16_t scaled = (uint16_t)(force + 1) * 32;
+	return scaled > 255 ? 255 : (uint8_t)scaled;
+}
+#endif
 
 /* PS5 trigger effect documentation:
    https://controllers.fandom.com/wiki/Sony_DualSense#FFB_Trigger_Modes
@@ -117,6 +228,11 @@ static QSet<QPair<uint16_t, uint16_t>> chiaki_handheld_controller_ids({
 	QPair<uint16_t, uint16_t>(0x0db0, 0x1901), // MSI Claw
 });
 
+static QSet<QPair<uint16_t, uint16_t>> chiaki_xbox_ally_x_controller_ids({
+	// in format (vendor id, product id)
+	QPair<uint16_t, uint16_t>(0x0b05, 0x1b4c), // ASUS ROG Xbox Ally X
+});
+
 static QSet<QPair<uint16_t, uint16_t>> chiaki_steam_virtual_controller_ids({
 	// in format (vendor id, product id)
 #ifdef Q_OS_MACOS
@@ -195,6 +311,15 @@ void ControllerManager::SetButtonsByPos()
 {
 #ifdef CHIAKI_GUI_ENABLE_SDL_GAMECONTROLLER
 	SDL_SetHint(SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS, "0");
+#endif
+}
+
+void ControllerManager::SetXboxAllyXTriggersEnabled(bool enabled)
+{
+	xbox_ally_x_triggers_enabled = enabled;
+#ifdef _WIN32
+	for(auto controller : open_controllers)
+		controller->UpdateXboxAllyXEnabledState(enabled);
 #endif
 }
 
@@ -358,7 +483,7 @@ void ControllerManager::ControllerClosed(Controller *controller)
 Controller::Controller(int device_id, ControllerManager *manager)
 : QObject(manager), ref(0), last_motion_timestamp(0), micbutton_push(false), is_dualsense(false),
   is_dualsense_edge(false), has_led(false), firmware_version(0), updating_mapping_button(false), is_handheld(false),
-  is_steam_virtual(false), is_steam_virtual_unmasked(false), enable_analog_stick_mapping(false)
+  is_xbox_ally_x(false), is_steam_virtual(false), is_steam_virtual_unmasked(false), enable_analog_stick_mapping(false)
 {
 	this->id = device_id;
 	this->manager = manager;
@@ -385,6 +510,11 @@ Controller::Controller(int device_id, ControllerManager *manager)
 			is_dualsense = chiaki_dualsense_controller_ids.contains(controller_id);
 			is_handheld = chiaki_handheld_controller_ids.contains(controller_id);
 			is_dualsense_edge = chiaki_dualsense_edge_controller_ids.contains(controller_id);
+#ifdef _WIN32
+			is_xbox_ally_x = chiaki_xbox_ally_x_controller_ids.contains(controller_id) && manager->GetXboxAllyXTriggersEnabled();
+			if(is_xbox_ally_x)
+				OpenXboxAllyXHidHandle();
+#endif
 			firmware_version = SDL_GameControllerGetFirmwareVersion(controller);
 			SDL_Joystick *js = SDL_GameControllerGetJoystick(controller);
 			SDL_JoystickGUID guid = SDL_JoystickGetGUID(js);
@@ -416,6 +546,10 @@ Controller::~Controller()
 		this->SetRumble(0,0);
 		SDL_GameControllerClose(controller);
 	}
+#endif
+#ifdef _WIN32
+	if(is_xbox_ally_x)
+		CloseXboxAllyXHidHandle();
 #endif
 }
 
@@ -583,9 +717,17 @@ inline bool Controller::HandleAxisEvent(SDL_ControllerAxisEvent event) {
 	{
 		case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
 			state.l2_state = (uint8_t)(event.value >> 7);
+#ifdef _WIN32
+			if(is_xbox_ally_x)
+				UpdateXboxAllyXTriggerFromPosition();
+#endif
 			break;
 		case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
 			state.r2_state = (uint8_t)(event.value >> 7);
+#ifdef _WIN32
+			if(is_xbox_ally_x)
+				UpdateXboxAllyXTriggerFromPosition();
+#endif
 			break;
 		case SDL_CONTROLLER_AXIS_LEFTX:
 			state.left_x = event.value;
@@ -833,8 +975,137 @@ void Controller::ChangePlayerIndex(const uint8_t player_index)
 #endif
 }
 
+#ifdef _WIN32
+void Controller::UpdateXboxAllyXEnabledState(bool enabled)
+{
+	if(!controller)
+		return;
+	auto controller_id = QPair<uint16_t, uint16_t>(SDL_GameControllerGetVendor(controller), SDL_GameControllerGetProduct(controller));
+	bool shouldBeAllyX = chiaki_xbox_ally_x_controller_ids.contains(controller_id) && enabled;
+	if(shouldBeAllyX == is_xbox_ally_x)
+		return; // no cambio, no hacer nada
+
+	is_xbox_ally_x = shouldBeAllyX;
+	if(is_xbox_ally_x)
+		OpenXboxAllyXHidHandle();
+	else
+		CloseXboxAllyXHidHandle();
+}
+
+void Controller::OpenXboxAllyXHidHandle()
+{
+	xbox_ally_x_hid_handle = nullptr;
+
+	GUID hid_guid;
+	HidD_GetHidGuid(&hid_guid);
+
+	HDEVINFO device_info_set = SetupDiGetClassDevsW(&hid_guid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+	if(device_info_set == INVALID_HANDLE_VALUE)
+		return;
+
+	SP_DEVICE_INTERFACE_DATA interface_data;
+	interface_data.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+
+	for(DWORD index = 0; SetupDiEnumDeviceInterfaces(device_info_set, nullptr, &hid_guid, index, &interface_data); index++)
+	{
+		DWORD required_size = 0;
+		SetupDiGetDeviceInterfaceDetailW(device_info_set, &interface_data, nullptr, 0, &required_size, nullptr);
+		if(required_size == 0)
+			continue;
+
+		auto detail_data = (PSP_DEVICE_INTERFACE_DETAIL_DATA_W)malloc(required_size);
+		detail_data->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+		if(SetupDiGetDeviceInterfaceDetailW(device_info_set, &interface_data, detail_data, required_size, nullptr, nullptr))
+		{
+			QString device_path = QString::fromWCharArray(detail_data->DevicePath).toLower();
+			if(device_path.contains("vid_0b05") && device_path.contains("pid_1b4c") && device_path.contains("mi_02&col01"))
+			{
+				HANDLE handle = CreateFileW(detail_data->DevicePath, GENERIC_READ | GENERIC_WRITE,
+					FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+				free(detail_data);
+				if(handle != INVALID_HANDLE_VALUE)
+				{
+					xbox_ally_x_hid_handle = (void *)handle;
+					SetupDiDestroyDeviceInfoList(device_info_set);
+					return;
+				}
+				continue;
+			}
+		}
+		free(detail_data);
+	}
+
+	SetupDiDestroyDeviceInfoList(device_info_set);
+}
+
+void Controller::UpdateXboxAllyXTriggerFromPosition()
+{
+	uint8_t intensityLeft = XboxAllyXApproxIntensity(xbox_ally_x_trigger_type_left, xbox_ally_x_trigger_data_left, state.l2_state);
+	uint8_t intensityRight = XboxAllyXApproxIntensity(xbox_ally_x_trigger_type_right, xbox_ally_x_trigger_data_right, state.r2_state);
+
+	if(intensityLeft != xbox_ally_x_last_intensity_left)
+	{
+		SendXboxAllyXTriggerEffect(3, intensityLeft);
+		xbox_ally_x_last_intensity_left = intensityLeft;
+	}
+	if(intensityRight != xbox_ally_x_last_intensity_right)
+	{
+		SendXboxAllyXTriggerEffect(4, intensityRight);
+		xbox_ally_x_last_intensity_right = intensityRight;
+	}
+}
+
+void Controller::CloseXboxAllyXHidHandle()
+{
+	if(xbox_ally_x_hid_handle)
+	{
+		CloseHandle((HANDLE)xbox_ally_x_hid_handle);
+		xbox_ally_x_hid_handle = nullptr;
+	}
+}
+
+void Controller::SendXboxAllyXTriggerEffect(uint8_t selector, uint8_t intensity)
+{
+	if(!xbox_ally_x_hid_handle)
+		return;
+
+	uint8_t start[64] = {0};
+	start[0] = 0x5a; start[1] = 0xd0; start[2] = 0x05; start[3] = 0x02;
+	start[4] = selector; start[5] = intensity;
+	bool ok = HidD_SetFeature((HANDLE)xbox_ally_x_hid_handle, start, sizeof(start));
+
+	if(!ok)
+	{
+		// El handle puede haberse invalidado (ej: la Ally entro en suspension
+		// y el dispositivo se re-enumero). Reabrimos una vez y reintentamos.
+		CloseXboxAllyXHidHandle();
+		OpenXboxAllyXHidHandle();
+		if(!xbox_ally_x_hid_handle)
+			return;
+		HidD_SetFeature((HANDLE)xbox_ally_x_hid_handle, start, sizeof(start));
+	}
+
+	uint8_t step[64] = {0};
+	step[0] = 0x5a; step[1] = 0xd0; step[2] = 0x05; step[3] = 0x03;
+	step[4] = 1;
+	HidD_SetFeature((HANDLE)xbox_ally_x_hid_handle, step, sizeof(step));
+}
+#endif
+
 void Controller::SetTriggerEffects(uint8_t type_left, const uint8_t *data_left, uint8_t type_right, const uint8_t *data_right)
 {
+#ifdef _WIN32
+	if(is_xbox_ally_x)
+	{
+		xbox_ally_x_trigger_type_left = type_left;
+		memcpy(xbox_ally_x_trigger_data_left, data_left, 10);
+		xbox_ally_x_trigger_type_right = type_right;
+		memcpy(xbox_ally_x_trigger_data_right, data_right, 10);
+		UpdateXboxAllyXTriggerFromPosition();
+		return;
+	}
+#endif
 #ifdef CHIAKI_GUI_ENABLE_SDL_GAMECONTROLLER
 	if((!is_dualsense && !is_dualsense_edge) || !controller)
 		return;
@@ -911,6 +1182,16 @@ bool Controller::IsHandheld()
 	if(!controller)
 		return false;
 	return is_handheld;
+#endif
+	return false;
+}
+
+bool Controller::IsXboxAllyX()
+{
+#ifdef CHIAKI_GUI_ENABLE_SDL_GAMECONTROLLER
+	if(!controller)
+		return false;
+	return is_xbox_ally_x;
 #endif
 	return false;
 }

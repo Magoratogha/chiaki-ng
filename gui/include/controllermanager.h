@@ -37,6 +37,7 @@ class ControllerManager : public QObject
 		bool is_app_active;
 		bool moved;
 		uint8_t dualsense_intensity;
+		bool xbox_ally_x_triggers_enabled = true;
 
 		void ControllerClosed(Controller *controller);
 		void CheckMoved();
@@ -58,6 +59,8 @@ class ControllerManager : public QObject
 		void SetIsAppActive(bool active);
 		void SetDualSenseIntensity(uint8_t intensity) { dualsense_intensity = intensity; };
 		uint8_t GetDualSenseIntensity() { return dualsense_intensity; };
+		void SetXboxAllyXTriggersEnabled(bool enabled);
+		bool GetXboxAllyXTriggersEnabled() { return xbox_ally_x_triggers_enabled; };
 		void creatingControllerMapping(bool creating_controller_mapping);
 		QSet<int> GetAvailableControllers();
 		Controller *OpenController(int device_id);
@@ -86,6 +89,20 @@ class Controller : public QObject
 		bool HandleTouchpadEvent(SDL_ControllerTouchpadEvent event);
 #endif
 #endif
+#ifdef _WIN32
+		void *xbox_ally_x_hid_handle = nullptr; // HANDLE, usamos void* para no meter <windows.h> en el header
+		uint8_t xbox_ally_x_trigger_type_left = 0;
+		uint8_t xbox_ally_x_trigger_data_left[10] = {0};
+		uint8_t xbox_ally_x_trigger_type_right = 0;
+		uint8_t xbox_ally_x_trigger_data_right[10] = {0};
+		int16_t xbox_ally_x_last_intensity_left = -1;
+		int16_t xbox_ally_x_last_intensity_right = -1;
+		void OpenXboxAllyXHidHandle();
+		void CloseXboxAllyXHidHandle();
+		void SendXboxAllyXTriggerEffect(uint8_t selector, uint8_t intensity);
+		void UpdateXboxAllyXTriggerFromPosition();
+		void UpdateXboxAllyXEnabledState(bool enabled);
+#endif
 
 		int ref;
 		ControllerManager *manager;
@@ -96,6 +113,7 @@ class Controller : public QObject
 		bool enable_analog_stick_mapping;
 		bool is_dualsense;
 		bool is_handheld;
+		bool is_xbox_ally_x;
 		bool is_steam_virtual;
 		bool is_steam_virtual_unmasked;
 		bool is_dualsense_edge;
@@ -139,6 +157,7 @@ class Controller : public QObject
 		void ChangePlayerIndex(const uint8_t player_index);
 		bool IsDualSense();
 		bool IsHandheld();
+		bool IsXboxAllyX();
 		bool IsSteamVirtual();
 		bool IsSteamVirtualUnmasked();
 		bool IsDualSenseEdge();

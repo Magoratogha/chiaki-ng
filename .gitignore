@@ -39,3 +39,24 @@ chiaki.conf
 .cache/
 *.vscode
 site/
+
+# --- Agregado por nuestro proyecto de adaptive triggers en Ally X ---
+
+# Dependencias compiladas a mano (libplacebo, SPIRV-Cross, shaderc, ffmpeg,
+# sdl2-compat) - son pesadas y 100% reproducibles siguiendo SETUP.md, no
+# tiene sentido versionarlas.
+/deps/
+
+# Paquete final generado por package-chiaki-ng.ps1
+/chiaki-ng-dist/
+
+# Logs de debug nuestros, de sesiones de prueba
+chiaki-debug-log.txt
+chiaki-log.txt
+
+# Log de instalacion de aqtinstall (Qt)
+aqtinstall.log
+
+# Copia generada durante el empaquetado (el original vive en /scripts/,
+# este es solo una copia de deploy, no hace falta versionarla aparte)
+/gui/src/qml/qtwebengine_import.qml

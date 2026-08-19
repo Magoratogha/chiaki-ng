@@ -1,6 +1,7 @@
 #include "qmlsettings.h"
 #include "sessionlog.h"
 
+#include <controllermanager.h>
 #include <QSet>
 #include <QKeySequence>
 #include <QFutureWatcher>
@@ -63,6 +64,8 @@ QmlSettings::QmlSettings(Settings *settings, QObject *parent)
     if (settings->GetLogVerbose())
         QLoggingCategory::setFilterRules(QStringLiteral("chiaki.gui.debug=true"));
 
+    ControllerManager::GetInstance()->SetXboxAllyXTriggersEnabled(settings->GetXboxAllyXTriggersEnabled());
+
     connect(settings, &Settings::RegisteredHostsUpdated, this, &QmlSettings::registeredHostsChanged);
     connect(settings, &Settings::ProfilesUpdated, this, &QmlSettings::profilesChanged);
 }
@@ -81,6 +84,18 @@ void QmlSettings::setRemotePlayAsk(bool asked)
 bool QmlSettings::addSteamShortcutAsk() const
 {
     return settings->GetAddSteamShortcutAsk();
+}
+
+bool QmlSettings::xboxAllyXTriggersEnabled() const
+{
+    return settings->GetXboxAllyXTriggersEnabled();
+}
+
+void QmlSettings::setXboxAllyXTriggersEnabled(bool enabled)
+{
+    settings->SetXboxAllyXTriggersEnabled(enabled);
+    ControllerManager::GetInstance()->SetXboxAllyXTriggersEnabled(enabled);
+    emit xboxAllyXTriggersEnabledChanged();
 }
 
 void QmlSettings::setAddSteamShortcutAsk(bool asked)

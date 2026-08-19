@@ -64,8 +64,21 @@ static const QMap<QString, CLICommand> cli_commands = {
 int RunStream(QGuiApplication &app, const StreamSessionConnectInfo &connect_info);
 int RunMain(QGuiApplication &app, Settings *settings, bool exit_app_on_stream_exit);
 
+#include <cstdio>
+
+static void ChiakiFileMessageHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
+{
+	FILE *f = fopen("C:\\dev\\chiaki-ng\\chiaki-debug-log.txt", "a");
+	if(f)
+	{
+		fprintf(f, "%s\n", msg.toLocal8Bit().constData());
+		fclose(f);
+	}
+}
+
 int real_main(int argc, char *argv[])
 {
+	qInstallMessageHandler(ChiakiFileMessageHandler);
 	qRegisterMetaType<DiscoveryHost>();
 	qRegisterMetaType<RegisteredHost>();
 	qRegisterMetaType<HostMAC>();

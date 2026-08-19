@@ -24,6 +24,7 @@ class QmlSettings : public QObject
     Q_PROPERTY(bool verticalDeck READ verticalDeck WRITE setVerticalDeck NOTIFY verticalDeckChanged)
 #endif
     Q_PROPERTY(bool buttonsByPosition READ buttonsByPosition WRITE setButtonsByPosition NOTIFY buttonsByPositionChanged)
+    Q_PROPERTY(bool xboxAllyXTriggersEnabled READ xboxAllyXTriggersEnabled WRITE setXboxAllyXTriggersEnabled NOTIFY xboxAllyXTriggersEnabledChanged)
     Q_PROPERTY(bool startMicUnmuted READ startMicUnmuted WRITE setStartMicUnmuted NOTIFY startMicUnmutedChanged)
 #ifdef CHIAKI_GUI_ENABLE_SPEEX
     Q_PROPERTY(bool speechProcessing READ speechProcessing WRITE setSpeechProcessing NOTIFY speechProcessingChanged)
@@ -220,6 +221,9 @@ public:
 
     bool buttonsByPosition() const;
     void setButtonsByPosition(bool buttonsByPosition);
+
+    bool xboxAllyXTriggersEnabled() const;
+    void setXboxAllyXTriggersEnabled(bool enabled);
 
     bool iDROnFECFailureEnabled() const;
     void setIDROnFECFailureEnabled(bool enabled);
@@ -620,6 +624,7 @@ signals:
     void vSyncEnabledChanged();
     void rumbleHapticsIntensityChanged();
     void buttonsByPositionChanged();
+    void xboxAllyXTriggersEnabledChanged();
     void allowJoystickBackgroundEventsChanged();
     void startMicUnmutedChanged();
 #ifdef CHIAKI_GUI_ENABLE_STEAMDECK_NATIVE
